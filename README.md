@@ -5,8 +5,16 @@ Requires **Python 2**.
 
 ###Usage
 
-Script will set icons for all subdirectories within main directory.
+Script can be used to set icon for single folder or icons for all sub-folders within main folder.
 
-`python imdbcons.py 'path-to-main-directory'`
+-m : Set icons for all sub-folders within main movie folder
 
-If image is incorrect (due to misleading foldername / broad movie title) Find the hidden .imdb_id file within the movie's directory and set it to the correct imdb id found at imdb.com, then re-run the script.
+`python imdbcons.py -m path/to/movies`
+
+-s :	Set icon for folder of single movie
+
+`python imdbcons.py -s path/to/Inception`
+
+-id : Set icon for folder with a vague title using IMDB id
+
+`python imdbcons.py -id tt0060153 path/to/Batman`

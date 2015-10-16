@@ -1,11 +1,16 @@
 #!/usr/bin/env python
 
-from imdbpie import Imdb
-from PIL import Image
+try:
+    from imdbpie import Imdb
+    from PIL import Image
+except ImportError:
+    print '\nError: Modules "imdb-pie" and "Pillow" must be Installed\n'
+    quit()
 from urllib import urlretrieve
 import os
 import shutil
 import sys
+
 
 TEMP_DIR = 'temp_imdbcon'
 TEMP_JPG = os.path.join(TEMP_DIR, 'temp_image.jpg')
@@ -35,6 +40,61 @@ PROCESSES = {
     'search': 'Searching IMDB for title.',
     'complete': 'All processes are complete.',
 }
+
+ARGV_EXAMPLES = {
+    '-m': {
+        'use': 'Set icons for all sub-folders within main movie folder',
+        'ex': 'path/to/movies',
+    },
+    '-s': {
+        'use': 'Set icon for folder of single movie',
+        'ex': 'path/to/single_movie_folder',
+    },
+    '-id': {
+        'use': 'Set icon for folder with a vague title based on IMDB id',
+        'ex': 'tt0060153 path/to/vaguely_titled_movie_folder',
+    }
+}
+
+
+class Parser:
+    def __init__(self):
+        self.tag = ''
+        self.arg1 = ''
+        self.arg2 = ''
+        self.valid = True
+        self.get_args()
+        self.parsed = self.tag, self.arg1, self.arg2
+
+    def show_examples(self):
+        self.valid = False
+        print ''
+        for key in ARGV_EXAMPLES:
+            use = ARGV_EXAMPLES[key]['use']
+            ex = ARGV_EXAMPLES[key]['ex']
+            print '\t%s :\t%s\n\t\t\t%s %s\n' % (key, use, key, ex)
+
+    def get_args(self):
+        try:
+            self.tag = sys.argv[1]
+        except IndexError:
+            self.show_examples()
+            return
+        if self.tag not in ARGV_EXAMPLES:
+            self.show_examples()
+            return
+        try:
+            self.arg1 = sys.argv[2]
+        except IndexError:
+            self.show_examples()
+            return
+        if self.tag == '-id':
+            try:
+                self.arg2 = sys.argv[3]
+            except IndexError:
+                self.show_examples()
+                return
+
 
 
 class Display:
@@ -69,8 +129,9 @@ class Display:
 
 
 class IMDBcon:
-    def __init__(self, directory):
-        self.directory = directory
+    def __init__(self):
+        self.parser = Parser()
+        self.directory = ''
         self.imdb = Imdb()
         self.cover_size = 214, 317
         self.square_size = 317, 317
@@ -119,6 +180,11 @@ class IMDBcon:
         self.current['dir'] = directory
         self.current['path'] = os.path.join(self.directory, directory)
         self.display.current_title = directory
+
+    def set_id(self, imdb_id):
+        id_path = os.path.join(self.current['path'], '.imdb_id')
+        with open(id_path, 'w') as id_file:
+            id_file.write(imdb_id)
 
     def get_current_title(self):
         """Set self.current.imdb to Imdb Title object"""
@@ -201,18 +267,32 @@ class IMDBcon:
 
     def set_icons(self):
         """Set icons for all sub-directories in directory"""
-        print
-        self.make_temp_files()
         self.get_subdirectories()
         for subdirectory in self.subdirectories:
             self.set_current(subdirectory)
             self.set_icon()
             self.display.completed_processes += 1
+
+    def run(self):
+        if not self.parser.valid:
+            return 
+        tag, arg1, arg2 = self.parser.parsed
+        self.make_temp_files()
+        print ''
+        if tag == '-m':
+            self.directory = arg1
+            self.set_icons()
+        if tag == '-s':
+            self.set_current(arg1)
+            self.set_icon()
+        if tag == '-id':
+            self.set_current(arg2)
+            self.set_id(arg1)
+            self.set_icon()
         self.remove_temp_dir()
         self.exit_message()
 
 
 if __name__ == '__main__':
-    from sys import argv
-    imdbcon = IMDBcon(argv[1])
-    imdbcon.set_icons()
+    imdbcon = IMDBcon()
+    imdbcon.run()
