@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 try:
-    from imdbpie import Imdb
+    from imdbpie import Imdb, Imdb
+    from imdbpie.exceptions import HTTPError
     from PIL import Image
 except ImportError:
     print '\nError: Modules "imdb-pie" and "Pillow" must be Installed\n'
@@ -11,12 +12,26 @@ import os
 import shutil
 import sys
 
+reload(sys)
+sys.setdefaultencoding('utf8')
 
 TEMP_DIR = 'temp_imdbcon'
 TEMP_JPG = os.path.join(TEMP_DIR, 'temp_image.jpg')
 TEMP_PNG = os.path.join(TEMP_DIR, 'temp_image.png')
 EMPTY_PNG = os.path.join(TEMP_DIR, 'temp_empty_square_png.png')
 MAGIC_SCRIPT = os.path.join(TEMP_DIR, 'set_icon_magic_temp.py')
+ACCEPTED_EXTENSIONS = (
+    'webm', 'mkv', 'flv', 'avi', 'wmv', 'mp4',
+    'mpg', 'mp2', 'mpeg', 'mpe', 'mpv', 'm4v'
+)
+
+MOVIE_DICT = {
+    'path': '',
+    'title': '',
+    'imdb_id': None,
+    'imdb_obj': None,
+    'duplicates': []
+}
 
 MAGIC_SCRIPT_STRING = """
 import Cocoa
@@ -44,15 +59,19 @@ PROCESSES = {
 ARGV_EXAMPLES = {
     '-m': {
         'use': 'Set icons for all sub-folders within main movie folder',
-        'ex': 'path/to/movies',
+        'ex': 'path/to/Movies',
+    },
+    '-a': {
+        'use': 'Set icons for ALL files and folders under main movie folder',
+        'ex': 'path/to/Movies',
     },
     '-s': {
-        'use': 'Set icon for folder of single movie',
-        'ex': 'path/to/single_movie_folder',
+        'use': 'Set icon for single folder/file',
+        'ex': 'path/to/Inception',
     },
     '-id': {
-        'use': 'Set icon for folder with a vague title based on IMDB id',
-        'ex': 'tt0060153 path/to/vaguely_titled_movie_folder',
+        'use': 'Set icon for folder/file with a vague title based on IMDB id',
+        'ex': 'tt0060153 path/to/Batman',
     }
 }
 
@@ -135,12 +154,8 @@ class IMDBcon:
         self.imdb = Imdb()
         self.cover_size = 214, 317
         self.square_size = 317, 317
-        self.current = {
-            'dir': '',
-            'path': '',
-            'imdb': None
-        }
-        self.subdirectories = []
+        self.current = MOVIE_DICT
+        self.all_files = []
         self.display = Display()
 
     def update_display(self, process, args=None):
@@ -175,43 +190,66 @@ class IMDBcon:
         self.update_display('clean')
         shutil.rmtree(TEMP_DIR)
 
-    def set_current(self, directory):
-        """Set self.current 'dir' and 'path'"""
-        self.current['dir'] = directory
-        self.current['path'] = os.path.join(self.directory, directory)
-        self.display.current_title = directory
+    def set_current(self, dict_item=None, path=''):
+        """Set self.current 'title' and 'path'"""
+        if dict_item:
+            self.current = dict_item
+        elif path:
+            self.current['path'] = path
+            self.current['title'] = os.path.splitext(os.path.basename(path))[0]
+        self.display.current_title = self.current['title']
 
     def set_id(self, imdb_id):
-        id_path = os.path.join(self.current['path'], '.imdb_id')
-        with open(id_path, 'w') as id_file:
-            id_file.write(imdb_id)
+        if os.path.isdir(self.current['path']):
+            id_path = os.path.join(self.current['path'], '.imdb_id')
+            with open(id_path, 'w') as id_file:
+                id_file.write(imdb_id)
+        self.current['imdb_id'] = imdb_id
 
     def get_current_title(self):
         """Set self.current.imdb to Imdb Title object"""
         self.update_display('search')
         imdb_id = os.path.join(self.current['path'], '.imdb_id')
         # User can use preset imdb_id for full accuracy
-        if os.path.isfile(imdb_id):
+        if self.current['imdb_id']:
+            try:
+                self.current['imdb_obj'] = self.imdb.get_title_by_id(self.current['imdb_id'])
+            except HTTPError:
+                error = 'Bad IMDB id for "%s" (%s)' % (
+                    self.current['title'], self.current['imdb_id'])
+                self.display.errors_caught.append(error)
+                return False
+        elif os.path.isfile(imdb_id):
             try:
                 with open(imdb_id) as id_file:
-                    self.current['imdb'] = self.imdb.get_title_by_id(id_file.read())
-            except:
-                error = 'Bad IMDB id for "%s."' % self.current['dir']
+                    self.current['imdb_obj'] = self.imdb.get_title_by_id(
+                        ''.join(id_file.read().split()))
+            except HTTPError:
+                error = 'Bad IMDB id for "%s"' % self.current['title']
                 self.display.errors_caught.append(error)
+                return False
         else:
             try:
-                titles = self.imdb.search_for_title(self.current['dir'])
+                titles = self.imdb.search_for_title(self.current['title'])
                 temp = titles[0]  # Not an Imdb Title object
-                self.current['imdb'] = self.imdb.get_title_by_id(temp['imdb_id'])
-                with open(imdb_id, 'w') as id_file:
-                    id_file.write(temp['imdb_id'])
+                self.current['imdb_obj'] = self.imdb.get_title_by_id(temp['imdb_id'])
+                if os.path.isdir(self.current['path']):
+                    with open(imdb_id, 'w') as id_file:
+                        id_file.write(temp['imdb_id'])
             except IndexError:
-                error = 'No Titles Found for "%s."' % self.current['dir']
+                error = 'No Titles Found for "%s"' % self.current['title']
                 self.display.errors_caught.append(error)
+                return False
+        if self.current['imdb_obj'].cover_url:
+            return True
+        else:
+            error = 'No Cover Image Found for "%s"' % self.current['title']
+            self.display.errors_caught.append(error)
+            return False
 
     def retrieve_cover(self):
         """Download .jpg cover file from IMDB"""
-        url = self.current['imdb'].cover_url
+        url = self.current['imdb_obj'].cover_url
         self.update_display('download', url)
         urlretrieve(url, TEMP_JPG)
 
@@ -236,15 +274,19 @@ class IMDBcon:
         """Run 'set_icon.py' script"""
         self.update_display('set_icon')
         os.system('python2.6 %s "%s" "%s"' % (MAGIC_SCRIPT, TEMP_PNG, self.current['path']))
-        os.remove(TEMP_PNG)
 
     def set_icon(self):
         """Set directory icon to matching IMDB cover image"""
-        self.get_current_title()
+        if not self.get_current_title():
+            return
         self.retrieve_cover()
         self.resize_icon()
         self.square_icon()
         self.set_icon_magic()
+        for item in self.current['duplicates']:
+            self.set_current(dict_item=item)
+            self.set_icon_magic()
+        os.remove(TEMP_PNG)
 
     def exit_message(self):
         """Display exit message along with any errors"""
@@ -257,36 +299,65 @@ class IMDBcon:
             print('No Errors.')
         print
 
-    def get_subdirectories(self):
-        """Get list of all subdirectories in directory"""
-        for item in os.listdir(self.directory):
-            path = os.path.join(self.directory, item)
-            if os.path.isdir(path):
-                self.subdirectories.append(item)
-        self.display.total_processes = len(self.subdirectories)
+    def is_duplicate(self, item):
+        for existing in self.all_files:
+            if item['title'] == existing['title']:
+                existing['duplicates'].append(item)
+                return True
+        return False
+
+    def find_all(self):
+        """Get list of all subdirectories and their files in directory"""
+        for root, dirs, files in os.walk(self.directory):
+            for directory in dirs:
+                item = {
+                    'path': os.path.join(root, directory),
+                    'title': directory,
+                    'imdb_id': None,
+                    'imdb_obj': None,
+                    'duplicates': []
+                }
+                if not self.is_duplicate(item):
+                    self.all_files.append(item)
+            if not self.parser.tag == '-a':
+                continue
+            for filename in files:
+                split = os.path.splitext(filename)
+                title, ext = split
+                if ext[1:] not in ACCEPTED_EXTENSIONS:
+                    continue
+                item = {
+                    'path': os.path.join(root, filename),
+                    'title': title,
+                    'imdb_id': None,
+                    'duplicates': []
+                }
+                if not self.is_duplicate(item):
+                    self.all_files.append(item)
+        self.display.total_processes = len(self.all_files)
 
     def set_icons(self):
         """Set icons for all sub-directories in directory"""
-        self.get_subdirectories()
-        for subdirectory in self.subdirectories:
-            self.set_current(subdirectory)
+        self.find_all()
+        for item in self.all_files:
+            self.set_current(dict_item=item)
             self.set_icon()
             self.display.completed_processes += 1
 
     def run(self):
         if not self.parser.valid:
-            return 
+            return
         tag, arg1, arg2 = self.parser.parsed
         self.make_temp_files()
         print ''
-        if tag == '-m':
+        if tag in ('-m', '-a'):
             self.directory = arg1
             self.set_icons()
         if tag == '-s':
-            self.set_current(arg1)
+            self.set_current(path=arg1)
             self.set_icon()
         if tag == '-id':
-            self.set_current(arg2)
+            self.set_current(path=arg2)
             self.set_id(arg1)
             self.set_icon()
         self.remove_temp_dir()
